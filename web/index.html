@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Barber Booking</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --card: #171b22;
+      --accent: #00d4ff;
+      --text: #f3f5f8;
+      --muted: #95a1b5;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, sans-serif;
+      background: radial-gradient(circle at top, #1b2230 0%, var(--bg) 48%);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .wrap { max-width: 680px; margin: 0 auto; }
+    h1 { margin: 0 0 10px; font-size: 28px; }
+    .subtitle { margin: 0 0 20px; color: var(--muted); }
+    .card {
+      background: linear-gradient(165deg, #1b2130, var(--card));
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.35);
+      margin-bottom: 14px;
+    }
+    .days { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .day {
+      border: 1px solid rgba(255,255,255,.09);
+      border-radius: 14px;
+      padding: 10px;
+      cursor: pointer;
+      transition: .2s;
+      background: rgba(255,255,255,0.02);
+    }
+    .day:hover { border-color: var(--accent); transform: translateY(-1px); }
+    .day.active { border-color: var(--accent); background: rgba(0,212,255,.15); }
+    .weekday { font-size: 12px; color: var(--muted); }
+    .date { font-size: 16px; margin-top: 4px; }
+
+    .times { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .time { padding: 8px 12px; border: 1px solid #3a465f; border-radius: 999px; cursor: pointer; }
+    .time.active { background: var(--accent); color: #05151b; border-color: var(--accent); font-weight: 700; }
+    .time.disabled { opacity: .35; pointer-events: none; }
+
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    input, select, button {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,.12);
+      background: rgba(255,255,255,.03);
+      color: var(--text);
+      padding: 12px;
+    }
+    button {
+      background: linear-gradient(90deg, #00c2ff, #4dfcb8);
+      color: #062126;
+      border: 0;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+    .status { min-height: 18px; margin-top: 10px; color: #90ffa6; }
+    .error { color: #ff8686; }
+
+    @media (max-width: 580px){ .grid, .days { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Запись к барберу ✂️</h1>
+  <p class="subtitle">Выберите дату и время на ближайшие 14 дней.</p>
+
+  <div class="card">
+    <div id="days" class="days"></div>
+  </div>
+
+  <div class="card">
+    <div class="times" id="times"></div>
+  </div>
+
+  <div class="card">
+    <div class="grid">
+      <input id="name" placeholder="Ваше имя" />
+      <input id="phone" placeholder="Телефон" />
+      <select id="service">
+        <option>Мужская стрижка</option>
+        <option>Стрижка + борода</option>
+        <option>Оформление бороды</option>
+      </select>
+    </div>
+    <button id="submit">Подтвердить запись</button>
+    <div id="status" class="status"></div>
+  </div>
+</div>
+
+<script>
+const tg = window.Telegram?.WebApp;
+if (tg) {
+  tg.ready();
+  tg.expand();
+}
+
+const slots = ["10:00", "11:00", "12:00", "13:00", "15:00", "16:00", "17:00", "18:00", "19:00"];
+let selectedDate = null;
+let selectedTime = null;
+let booked = [];
+
+async function loadCalendar() {
+  const [calendarRes, bookingsRes] = await Promise.all([
+    fetch('/api/calendar'),
+    fetch('/api/bookings')
+  ]);
+  const calendar = await calendarRes.json();
+  const bookingsData = await bookingsRes.json();
+  booked = bookingsData.items;
+
+  const daysEl = document.getElementById('days');
+  daysEl.innerHTML = '';
+  calendar.days.forEach((day, idx) => {
+    const el = document.createElement('div');
+    el.className = 'day';
+    el.innerHTML = `<div class="weekday">${day.weekday}</div><div class="date">${day.date}</div>`;
+    el.onclick = () => {
+      selectedDate = day.iso;
+      document.querySelectorAll('.day').forEach(d => d.classList.remove('active'));
+      el.classList.add('active');
+      renderTimes();
+    };
+    if (idx === 0) {
+      selectedDate = day.iso;
+      el.classList.add('active');
+    }
+    daysEl.appendChild(el);
+  });
+
+  renderTimes();
+}
+
+function renderTimes() {
+  const timesEl = document.getElementById('times');
+  timesEl.innerHTML = '';
+  slots.forEach(time => {
+    const taken = booked.some(b => b.date === selectedDate && b.time === time);
+    const el = document.createElement('div');
+    el.className = `time ${taken ? 'disabled' : ''}`;
+    el.textContent = time;
+    el.onclick = () => {
+      selectedTime = time;
+      document.querySelectorAll('.time').forEach(t => t.classList.remove('active'));
+      el.classList.add('active');
+    };
+    if (selectedTime === time) el.classList.add('active');
+    timesEl.appendChild(el);
+  });
+}
+
+function status(text, isError = false) {
+  const st = document.getElementById('status');
+  st.textContent = text;
+  st.className = 'status' + (isError ? ' error' : '');
+}
+
+document.getElementById('submit').onclick = async () => {
+  const name = document.getElementById('name').value.trim();
+  const phone = document.getElementById('phone').value.trim();
+  const service = document.getElementById('service').value;
+  const user = tg?.initDataUnsafe?.user;
+
+  if (!name || !phone || !selectedDate || !selectedTime) {
+    status('Заполните все поля и выберите время.', true);
+    return;
+  }
+
+  const payload = {
+    telegram_id: user?.id || 0,
+    telegram_username: user?.username || null,
+    client_name: name,
+    phone,
+    service,
+    date: selectedDate,
+    time: selectedTime
+  };
+
+  const res = await fetch('/api/book', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!res.ok) {
+    const err = await res.json();
+    status(err.detail || 'Ошибка записи.', true);
+    return;
+  }
+
+  status('Вы успешно записаны!');
+  if (tg) tg.HapticFeedback?.notificationOccurred('success');
+  await loadCalendar();
+};
+
+loadCalendar();
+</script>
+</body>
+</html>
