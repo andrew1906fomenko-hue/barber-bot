@@ -1,5 +1,6 @@
 import json
 import os
+import asyncio
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, List
@@ -81,7 +82,6 @@ def calendar_view(bookings: List[Dict]) -> str:
     return "\n".join(lines)
 
 
-# Telegram request with bigger timeout (fix for Python 3.14)
 request = HTTPXRequest(connect_timeout=30, read_timeout=30)
 
 telegram_app = (
@@ -104,15 +104,12 @@ api.add_middleware(
 
 @api.on_event("startup")
 async def startup():
-    await telegram_app.initialize()
-    await telegram_app.start()
-    await telegram_app.updater.start_polling()
+    asyncio.create_task(telegram_app.run_polling())
 
 
 @api.on_event("shutdown")
 async def shutdown():
     await telegram_app.stop()
-    await telegram_app.shutdown()
 
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
