@@ -13,14 +13,19 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from telegram import KeyboardButton, ReplyKeyboardMarkup, Update, WebAppInfo
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
-from telegram.request import HTTPXRequest
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "0"))
-WEB_APP_URL = os.getenv("WEB_APP_URL", "http://localhost:8000")
+WEB_APP_URL = os.getenv("WEB_APP_URL", "")
 
 DATA_FILE = Path("data/bookings.json")
 
@@ -51,10 +56,14 @@ def read_bookings() -> List[Dict]:
 
 
 def write_bookings(bookings: List[Dict]):
-    DATA_FILE.write_text(json.dumps(bookings, ensure_ascii=False, indent=2), encoding="utf-8")
+    DATA_FILE.write_text(
+        json.dumps(bookings, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 def calendar_view(bookings: List[Dict]) -> str:
+
     today = date.today()
     days = [today + timedelta(days=i) for i in range(14)]
 
@@ -68,6 +77,7 @@ def calendar_view(bookings: List[Dict]) -> str:
         by_day.setdefault(b["date"], []).append(b)
 
     for d in days:
+
         key = d.isoformat()
         items = sorted(by_day.get(key, []), key=lambda x: x["time"])
 
@@ -77,19 +87,14 @@ def calendar_view(bookings: List[Dict]) -> str:
             lines.append("  — свободно")
         else:
             for it in items:
-                lines.append(f"  • {it['time']} — {it['client_name']} ({it['service']})")
+                lines.append(
+                    f"  • {it['time']} — {it['client_name']} ({it['service']})"
+                )
 
     return "\n".join(lines)
 
 
-request = HTTPXRequest(connect_timeout=30, read_timeout=30)
-
-telegram_app = (
-    Application.builder()
-    .token(BOT_TOKEN)
-    .request(request)
-    .build()
-)
+telegram_app = Application.builder().token(BOT_TOKEN).build()
 
 api = FastAPI(title="Barber Booking Web App")
 
@@ -100,16 +105,6 @@ api.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@api.on_event("startup")
-async def startup():
-    asyncio.create_task(telegram_app.run_polling())
-
-
-@api.on_event("shutdown")
-async def shutdown():
-    await telegram_app.stop()
 
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -170,7 +165,24 @@ async def admin_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 telegram_app.add_handler(CommandHandler("start", start_handler))
 telegram_app.add_handler(CommandHandler("calendar", admin_calendar))
-telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+telegram_app.add_handler(
+    MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler)
+)
+
+
+@api.on_event("startup")
+async def startup():
+
+    await telegram_app.initialize()
+
+    asyncio.create_task(telegram_app.run_polling())
+
+
+@api.on_event("shutdown")
+async def shutdown():
+
+    await telegram_app.stop()
+    await telegram_app.shutdown()
 
 
 @api.get("/")
@@ -189,7 +201,7 @@ async def create_booking(payload: BookingRequest):
     try:
         booked_dt = datetime.strptime(
             f"{payload.date} {payload.time}",
-            "%Y-%m-%d %H:%M"
+            "%Y-%m-%d %H:%M",
         )
     except ValueError:
         raise HTTPException(status_code=400, detail="Неверная дата")
@@ -203,7 +215,7 @@ async def create_booking(payload: BookingRequest):
         if b["date"] == payload.date and b["time"] == payload.time:
             raise HTTPException(status_code=409, detail="Время занято")
 
-    item = payload.model_dump()
+    item = payload.dict()
     item["created_at"] = datetime.now().isoformat()
 
     bookings.append(item)
